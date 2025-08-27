@@ -25,6 +25,8 @@ services:
       - "--providers.docker.network=web"
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
+      - --providers.docker.exposedbydefault=false
+
 
       #### https ####
       - --entrypoints.websecure.address=:443
@@ -151,6 +153,7 @@ services:
       - private
       - web
     environment:
+      - SERVER_PORT=8080
       - SPRING_DATASOURCE_URL=jdbc:postgresql://iris-postgres:5432/iris_coiffure_db
       - SPRING_DATASOURCE_USERNAME=admin
       - SPRING_DATASOURCE_PASSWORD=youAdmin123
@@ -161,8 +164,26 @@ services:
       # Configuration Swagger pour HTTPS
       - SPRINGDOC_SWAGGER_UI_SERVER_URL=https://api.iriscoiffure.com
       - SPRINGDOC_API_DOCS_SERVER_URL=https://api.iriscoiffure.com
-    ports:
-      - "8087"
+
+      # =========================
+      # File Upload Configuration
+      # =========================
+      - APP_UPLOAD_DIR=uploads
+      - SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE=20MB
+      - SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE=20MB
+
+      # =========================
+      # Twilio Configuration (variables d'environnement)
+      # =========================
+      - TWILIO_ACCOUNT_SID=AC36eed0305b532095581aef0e8b31889c
+      - TWILIO_AUTH_TOKEN=21dd9e922f5f6d90c22deca939d82d09
+      - TWILIO_MESSAGING_SERVICE_SID=MGfcdfaeace1728ad206c12d957183c3da
+
+      # =========================
+      # JWT Security Configuration (variables d'environnement)
+      # =========================
+      - SECURITY_JWT_SECRET=TWFDbGVEZVRlc3RQb3VySnd0UXVpRmFpdFBsdXNEZTMyQ2FyYWN0ZXJlczEyMw==
+      - SECURITY_JWT_EXPIRATION=86400000
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8087/actuator/health"]
       interval: 30s
@@ -175,8 +196,7 @@ services:
       - "traefik.http.routers.iris-api.entrypoints=websecure"
       - "traefik.http.routers.iris-api.tls=true"
       - "traefik.http.routers.iris-api.tls.certresolver=lets-encr"
-      - "traefik.http.services.iris-api.loadbalancer.server.port=8087"
-      - "traefik.http.routers.iris-api.middlewares=corsheaders@docker"
+      - "traefik.http.services.iris-api.loadbalancer.server.port=8080"
 
 #---------------------
 # Frontend Admin (Temporaire)
