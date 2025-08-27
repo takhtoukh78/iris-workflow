@@ -1,0 +1,261 @@
+networks:
+  private:
+    name: private
+    external: true
+  web:
+    name: web
+    external: true
+
+services:
+  traefik:
+    container_name: traefik
+    restart: always
+    image: traefik:v2.9
+    ports:
+      - 443:443
+      - 80:80
+    command:
+      - --api=true
+      - --api.dashboard=true
+      - --api.insecure=true
+      - "--log.level=INFO"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.watch=true"
+      - "--providers.docker.network=web"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+
+      #### https ####
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.lets-encr.acme.httpchallenge=true
+      - --certificatesresolvers.lets-encr.acme.email=takhtoukh76@gmail.com
+      - --certificatesresolvers.lets-encr.acme.storage=acme.json
+      - --certificatesresolvers.lets-encr.acme.httpchallenge.entrypoint=web
+      - --metrics.prometheus=true
+      - --metrics.prometheus.buckets=0.1,0.3,1.2,5.0
+    labels:
+      - "traefik.enable=true"
+      # Dashboard HTTPS
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.iriscoiffure.com`)"
+      - "traefik.http.routers.traefik.tls.certresolver=lets-encr"
+      - "traefik.http.routers.traefik.service=api@internal"
+      # Redirection HTTP vers HTTPS globale
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.redirect-https.rule=hostregexp(`{host:.+}`)"
+      - "traefik.http.routers.redirect-https.entrypoints=web"
+      - "traefik.http.routers.redirect-https.middlewares=redirect-to-https"
+      # CORS headers
+      - "traefik.http.middlewares.corsheaders.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE"
+      - "traefik.http.middlewares.corsheaders.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.corsheaders.headers.accessControlAllowHeaders=*"
+      - "traefik.http.middlewares.corsheaders.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.corsheaders.headers.addvaryheader=true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./acme.json:/acme.json
+    networks:
+      - web
+      - private
+
+# =====================
+# CI/CD SERVICES
+# =====================
+
+#---------------------
+# gogs-db
+#---------------------      
+  gogs-db:
+    image: postgres:13-alpine
+    container_name: gogs-db
+    volumes:
+      - ./data/gogs/postgres:/var/lib/postgresql/data
+    networks:
+      - private
+    environment:
+      - POSTGRES_DB=gogs
+      - POSTGRES_USER=gogs
+      - POSTGRES_PASSWORD=gogs
+    restart: always
+
+#---------------------
+# gogs
+#---------------------  
+  gogs:
+    image: gogs/gogs:latest
+    restart: always
+    container_name: gogs
+    ports:
+      - 2222:2222
+    networks:
+      - private
+      - web
+    volumes:
+      - ./data/gogs/data:/data
+    depends_on:
+      - gogs-db
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.gogs.entrypoints=websecure"
+      - traefik.http.routers.gogs.rule=Host(`gogs.iriscoiffure.com`)
+      - traefik.http.services.gogs.loadbalancer.server.port=3000
+      - "traefik.http.routers.gogs.tls.certresolver=lets-encr"
+      - "traefik.docker.network=web"
+
+#---------------------
+# jenkins 
+#---------------------
+  jenkins:
+    build:
+      context: .
+      dockerfile: jenkins.Dockerfile
+    container_name: jenkins
+    volumes:
+      - ./data/jenkins/jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - $PWD:/app
+    user: 0:0
+    networks:
+      - private
+      - web
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.jenkins.entrypoints=websecure"
+      - "traefik.docker.network=web"
+      - traefik.http.routers.jenkins.rule=Host(`jenkins.iriscoiffure.com`)
+      - traefik.http.services.jenkins.loadbalancer.server.port=8080
+      - "traefik.http.routers.jenkins.tls.certresolver=lets-encr"
+    environment:
+      - "JAVA_OPTS=-Xms512m -Xmx2048m"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "1"
+
+
+# =====================
+# IRIS COIFFURE APPLICATION (TEMPORAIRE)
+# =====================
+#---------------------
+# Backend API (Solution corrigée)
+#---------------------
+  iris-api:
+    image: takhtoukh/iris-api:latest
+    container_name: iris-api
+    restart: always
+    depends_on:
+      - iris-postgres
+    networks:
+      - private
+      - web
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://iris-postgres:5432/iris_coiffure_db
+      - SPRING_DATASOURCE_USERNAME=admin
+      - SPRING_DATASOURCE_PASSWORD=youAdmin123
+      - SPRING_PROFILES_ACTIVE=prod
+      # Configuration pour Traefik HTTPS
+      - SERVER_FORWARD_HEADERS_STRATEGY=FRAMEWORK
+      - SERVER_USE_FORWARD_HEADERS=true
+      # Configuration Swagger pour HTTPS
+      - SPRINGDOC_SWAGGER_UI_SERVER_URL=https://api.iriscoiffure.com
+      - SPRINGDOC_API_DOCS_SERVER_URL=https://api.iriscoiffure.com
+    ports:
+      - "8087"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8087/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.iris-api.rule=Host(`api.iriscoiffure.com`)"
+      - "traefik.http.routers.iris-api.entrypoints=websecure"
+      - "traefik.http.routers.iris-api.tls=true"
+      - "traefik.http.routers.iris-api.tls.certresolver=lets-encr"
+      - "traefik.http.services.iris-api.loadbalancer.server.port=8087"
+      - "traefik.http.routers.iris-api.middlewares=corsheaders@docker"
+
+#---------------------
+# Frontend Admin (Temporaire)
+#---------------------
+  iris-admin:
+    image: nginx:alpine
+    container_name: iris-admin
+    restart: always
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.iris-admin.rule=Host(`admin.iriscoiffure.com`)"
+      - "traefik.http.routers.iris-admin.entrypoints=websecure"
+      - "traefik.http.routers.iris-admin.tls.certresolver=lets-encr"
+      - "traefik.http.services.iris-admin.loadbalancer.server.port=80"
+      - "traefik.docker.network=web"
+
+#---------------------
+# Frontend Book (Temporaire)
+#---------------------
+  iris-book:
+    image: nginx:alpine
+    container_name: iris-book
+    restart: always
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.iris-book.rule=Host(`book.iriscoiffure.com`)"
+      - "traefik.http.routers.iris-book.entrypoints=websecure"
+      - "traefik.http.routers.iris-book.tls.certresolver=lets-encr"
+      - "traefik.http.services.iris-book.loadbalancer.server.port=80"
+      - "traefik.docker.network=web"
+
+#---------------------
+# Frontend Display (Temporaire)
+#---------------------
+  iris-display:
+    image: nginx:alpine
+    container_name: iris-display
+    restart: always
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.iris-display.rule=Host(`display.iriscoiffure.com`)"
+      - "traefik.http.routers.iris-display.entrypoints=websecure"
+      - "traefik.http.routers.iris-display.tls.certresolver=lets-encr"
+      - "traefik.http.services.iris-display.loadbalancer.server.port=80"
+      - "traefik.docker.network=web"
+#---------------------
+# Database PostgreSQL pour Iris Coiffure
+#---------------------
+  iris-postgres:
+    image: postgres:14
+    container_name: iris-postgres
+    restart: always
+    networks:
+      - private
+      - web
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: youAdmin123
+      POSTGRES_DB: iris_coiffure_db
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - iris_postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  # Volumes existants
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  sonarqube_temp:
+  postgresql:
+  postgresql_data:
+  # Volume pour Iris Coiffure
+  iris_postgres_data:
