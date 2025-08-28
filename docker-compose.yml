@@ -1,10 +1,8 @@
 networks:
-  private:
-    name: private
-    external: true
   web:
-    name: web
     external: true
+  private:
+    driver: bridge
 
 services:
   traefik:
@@ -150,46 +148,32 @@ services:
     depends_on:
       - iris-postgres
     networks:
-      - private
       - web
     environment:
       - SERVER_PORT=8080
+      - SERVER_FORWARD_HEADERS_STRATEGY=FRAMEWORK
+      - SERVER_USE_FORWARD_HEADERS=true
+      - SERVER_TOMCAT_REMOTE_IP_HEADER=x-forwarded-for
+      - SERVER_TOMCAT_PROTOCOL_HEADER=x-forwarded-proto
+      - SERVER_TOMCAT_PORT_HEADER=x-forwarded-port
+      # Database Configuration
       - SPRING_DATASOURCE_URL=jdbc:postgresql://iris-postgres:5432/iris_coiffure_db
       - SPRING_DATASOURCE_USERNAME=admin
       - SPRING_DATASOURCE_PASSWORD=youAdmin123
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      # Spring Profiles
       - SPRING_PROFILES_ACTIVE=prod
-      # Configuration pour Traefik HTTPS
-      - SERVER_FORWARD_HEADERS_STRATEGY=FRAMEWORK
-      - SERVER_USE_FORWARD_HEADERS=true
-      # Configuration Swagger pour HTTPS
-      - SPRINGDOC_SWAGGER_UI_SERVER_URL=https://api.iriscoiffure.com
-      - SPRINGDOC_API_DOCS_SERVER_URL=https://api.iriscoiffure.com
-
-      # =========================
       # File Upload Configuration
-      # =========================
       - APP_UPLOAD_DIR=uploads
       - SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE=20MB
       - SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE=20MB
-
-      # =========================
-      # Twilio Configuration (variables d'environnement)
-      # =========================
-      - TWILIO_ACCOUNT_SID=AC36eed0305b532095581aef0e8b31889c
-      - TWILIO_AUTH_TOKEN=21dd9e922f5f6d90c22deca939d82d09
-      - TWILIO_MESSAGING_SERVICE_SID=MGfcdfaeace1728ad206c12d957183c3da
-
-      # =========================
-      # JWT Security Configuration (variables d'environnement)
-      # =========================
-      - SECURITY_JWT_SECRET=TWFDbGVEZVRlc3RQb3VySnd0UXVpRmFpdFBsdXNEZTMyQ2FyYWN0ZXJlczEyMw==
+      # Swagger/OpenAPI Configuration
+      - SPRINGDOC_SWAGGER_UI_SERVER_URL=https://api.iriscoiffure.com
+      - SPRINGDOC_API_DOCS_SERVER_URL=https://api.iriscoiffure.com
+      # JWT Security Configuration
       - SECURITY_JWT_EXPIRATION=86400000
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8087/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB_SOCKET=DEBUG
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_MESSAGING=DEBUG
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.iris-api.rule=Host(`api.iriscoiffure.com`)"
@@ -197,7 +181,6 @@ services:
       - "traefik.http.routers.iris-api.tls=true"
       - "traefik.http.routers.iris-api.tls.certresolver=lets-encr"
       - "traefik.http.services.iris-api.loadbalancer.server.port=8080"
-
 #---------------------
 # Frontend Admin (Temporaire)
 #---------------------
@@ -207,6 +190,7 @@ services:
     restart: always
     networks:
       - web
+      - private
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.iris-admin.rule=Host(`admin.iriscoiffure.com`)"
